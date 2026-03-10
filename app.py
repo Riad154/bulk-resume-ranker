@@ -30,7 +30,6 @@ top_n = st.slider("🎯 Shortlist Top Candidates", 1, 10, 5)
 
 # ---------- PROCESS ----------
 def process_cv(file):
-
     try:
         text = extract_text(file)
 
@@ -65,7 +64,6 @@ def process_cv(file):
 
 # ---------- ANALYZE ----------
 if st.button("🚀 Analyze Candidates"):
-
     if not files or not jd.strip():
         st.warning("Upload CVs and Job Description first")
         st.stop()
@@ -81,16 +79,47 @@ if st.button("🚀 Analyze Candidates"):
             progress.progress((i + 1) / len(files))
 
     df = pd.DataFrame(results)
+
+    # Normalize scores to 0-100 if they are returned as decimals (<= 1)
+    if df['Score'].max() <= 1:
+        df['Score'] = (df['Score'] * 100).round().astype(int)
+    for col in ['Skills', 'Experience', 'Education']:
+        if col in df.columns and df[col].max() <= 1:
+            df[col] = (df[col] * 100).round().astype(int)
+
     ranked = df.sort_values("Score", ascending=False)
 
     st.subheader("🏆 Ranked Candidates")
-    st.dataframe(ranked, use_container_width=True)
+    st.dataframe(
+        ranked,
+        column_config={
+            "Candidate": "Candidate",
+            "Score": st.column_config.NumberColumn("Score", format="%d"),
+            "Skills": st.column_config.NumberColumn("Skills", format="%d"),
+            "Experience": st.column_config.NumberColumn("Experience", format="%d"),
+            "Education": st.column_config.NumberColumn("Education", format="%d"),
+            "Summary": st.column_config.TextColumn("Summary", width="large"),
+        },
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.subheader(f"✅ Top {top_n} Shortlisted")
-    st.dataframe(ranked.head(top_n), use_container_width=True)
+    st.dataframe(
+        ranked.head(top_n),
+        column_config={
+            "Candidate": "Candidate",
+            "Score": st.column_config.NumberColumn("Score", format="%d"),
+            "Skills": st.column_config.NumberColumn("Skills", format="%d"),
+            "Experience": st.column_config.NumberColumn("Experience", format="%d"),
+            "Education": st.column_config.NumberColumn("Education", format="%d"),
+            "Summary": st.column_config.TextColumn("Summary", width="large"),
+        },
+        use_container_width=True,
+        hide_index=True,
+    )
 
     csv = ranked.to_csv(index=False)
-
     st.download_button(
         "⬇ Download Result CSV",
         csv,
