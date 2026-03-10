@@ -41,7 +41,7 @@ def extract_number_from_string(s):
     match = re.search(r"(\d+\.?\d*)", s.replace(',', ''))
     if match:
         num = float(match.group(1))
-        # If the string contains a % sign, assume it's a percentage and convert to 0-1 scale if >1
+        # If the string contains a % sign and number > 1, assume it's a percentage on 0-100 scale
         if '%' in s and num > 1:
             num = num / 100.0
         return num
@@ -53,7 +53,6 @@ def extract_field(data, possible_keys, default=0.0):
     for key in possible_keys:
         if key in data:
             val = data[key]
-            # If it's a string, try to extract a number
             if isinstance(val, str):
                 num = extract_number_from_string(val)
                 return num
@@ -96,9 +95,65 @@ def safe_json_parse(response_text):
         return None
 
 
+def extract_scores_from_text(text):
+    """
+    Fallback: extract scores directly from raw text using regex patterns.
+    Returns a dict with keys: match_score, skills, experience, education, summary.
+    """
+    result = {
+        "match_score": 0.0,
+        "skills": 0.0,
+        "experience": 0.0,
+        "education": 0.0,
+        "summary": ""
+    }
+
+    # Patterns for common score indicators (case-insensitive)
+    patterns = {
+        "match_score": [
+            r"(?:overall|total|match)\s*score\s*[:\-]?\s*(\d+\.?\d*%?)",
+            r"score\s*[:\-]?\s*(\d+\.?\d*%?)",
+        ],
+        "skills": [
+            r"skills?\s*(?:match|score)?\s*[:\-]?\s*(\d+\.?\d*%?)",
+            r"skill\s*score\s*[:\-]?\s*(\d+\.?\d*%?)",
+        ],
+        "experience": [
+            r"experience\s*(?:match|score)?\s*[:\-]?\s*(\d+\.?\d*%?)",
+            r"exp\s*score\s*[:\-]?\s*(\d+\.?\d*%?)",
+        ],
+        "education": [
+            r"education\s*(?:match|score)?\s*[:\-]?\s*(\d+\.?\d*%?)",
+            r"edu\s*score\s*[:\-]?\s*(\d+\.?\d*%?)",
+        ]
+    }
+
+    for key, pat_list in patterns.items():
+        for pat in pat_list:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                num_str = m.group(1)
+                num = extract_number_from_string(num_str)
+                result[key] = num
+                break
+
+    # Try to extract summary (often after "summary:" or in a separate paragraph)
+    summary_match = re.search(r"summary\s*[:\-]?\s*(.+?)(?:\n\n|\Z)", text, re.IGNORECASE | re.DOTALL)
+    if summary_match:
+        result["summary"] = summary_match.group(1).strip()
+    else:
+        # If no explicit summary, take the last sentence or something
+        # For simplicity, we can take the last non-empty line
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        if lines:
+            result["summary"] = lines[-1]
+
+    return result
+
+
 # ---------- PROCESS CV ----------
 def process_cv(file):
-    raw_response = ""  # for debugging
+    raw_response = ""
     try:
         text = extract_text(file)
 
@@ -110,24 +165,43 @@ def process_cv(file):
                 "_raw": ""
             }
 
-        raw_response = score_resume(text, jd)  # store raw for debugging
+        raw_response = score_resume(text, jd)
         data = safe_json_parse(raw_response)
 
-        if data is None:
-            # No structured data found – return raw as summary, scores 0
-            return {
-                "Candidate": file.name,
-                "Score": 0,
-                "Summary": f"⚠️ Could not parse LLM response. Raw preview: {raw_response[:300]}...",
-                "_raw": raw_response
-            }
+        # Initialize with defaults
+        match_score = 0.0
+        skills_match = 0.0
+        experience_match = 0.0
+        education_match = 0.0
+        summary = ""
 
-        # Flexible field extraction with number extraction
-        match_score = extract_field(data, ["match_score", "overall_score", "score", "total_score"])
-        skills_match = extract_field(data, ["skills_match", "skill_match", "skills_score", "skill_score"])
-        experience_match = extract_field(data, ["experience_match", "exp_match", "experience_score", "exp_score"])
-        education_match = extract_field(data, ["education_match", "edu_match", "education_score", "edu_score"])
-        summary = data.get("summary", "")
+        if data is not None and isinstance(data, dict):
+            # Extract from JSON
+            match_score = extract_field(data, ["match_score", "overall_score", "score", "total_score"])
+            skills_match = extract_field(data, ["skills_match", "skill_match", "skills_score", "skill_score"])
+            experience_match = extract_field(data, ["experience_match", "exp_match", "experience_score", "exp_score"])
+            education_match = extract_field(data, ["education_match", "edu_match", "education_score", "edu_score"])
+            summary = data.get("summary", "")
+
+        # If any score is zero but raw_response contains numbers, try fallback extraction
+        # (This will also run if data is None)
+        if match_score == 0.0 or skills_match == 0.0 or experience_match == 0.0 or education_match == 0.0:
+            fallback = extract_scores_from_text(raw_response)
+            # Only override if fallback extracted a non-zero value (or if we have no summary)
+            if match_score == 0.0:
+                match_score = fallback["match_score"]
+            if skills_match == 0.0:
+                skills_match = fallback["skills"]
+            if experience_match == 0.0:
+                experience_match = fallback["experience"]
+            if education_match == 0.0:
+                education_match = fallback["education"]
+            if not summary and fallback["summary"]:
+                summary = fallback["summary"]
+
+        # If still no summary and data is None, use a preview
+        if not summary and data is None:
+            summary = f"Raw preview: {raw_response[:200]}..."
 
         return {
             "Candidate": file.name,
@@ -136,7 +210,7 @@ def process_cv(file):
             "Experience": experience_match,
             "Education": education_match,
             "Summary": summary,
-            "_raw": raw_response  # store for debugging
+            "_raw": raw_response
         }
 
     except Exception as e:
@@ -167,7 +241,6 @@ if st.button("🚀 Analyze Candidates"):
     df = pd.DataFrame(results)
 
     # Normalize scores to 0-100 if they are decimals (<= 1)
-    # But first, ensure they are floats
     for col in ['Score', 'Skills', 'Experience', 'Education']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
@@ -182,7 +255,6 @@ if st.button("🚀 Analyze Candidates"):
 
     st.subheader("🏆 Ranked Candidates")
 
-    # Display main table without raw column
     display_cols = ['Candidate', 'Score', 'Skills', 'Experience', 'Education', 'Summary']
     ranked_display = ranked[display_cols].copy()
 
@@ -200,7 +272,7 @@ if st.button("🚀 Analyze Candidates"):
         hide_index=True,
     )
 
-    # Debug expander to show raw responses for entries with Score 0 and non-empty Summary
+    # Debug expander to show raw responses for entries with Score 0
     with st.expander("🔍 Debug: Raw LLM Responses (for entries with Score 0)"):
         zero_score_df = ranked[ranked['Score'] == 0]
         if not zero_score_df.empty:
