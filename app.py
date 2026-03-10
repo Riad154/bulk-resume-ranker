@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import extract_text
@@ -28,6 +29,33 @@ jd = st.text_area(
 top_n = st.slider("🎯 Shortlist Top Candidates", 1, 10, 5)
 
 
+# ---------- HELPER: Robust field extraction ----------
+def extract_field(data, possible_keys, default=0.0):
+    """Return the first existing value from possible_keys, converted to float."""
+    for key in possible_keys:
+        if key in data:
+            try:
+                return float(data[key])
+            except (ValueError, TypeError):
+                continue
+    return default
+
+
+def safe_json_parse(response_text):
+    """Try to parse JSON; if fails, attempt to extract JSON from the text."""
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        # Look for a JSON object between curly braces
+        match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except:
+                pass
+    return None
+
+
 # ---------- PROCESS ----------
 def process_cv(file):
     try:
@@ -42,16 +70,30 @@ def process_cv(file):
             }
 
         response = score_resume(text, jd)
+        data = safe_json_parse(response)
 
-        data = json.loads(response)
+        if data is None:
+            # If no JSON could be parsed, return raw response as summary
+            return {
+                "Candidate": file.name,
+                "Score": 0,
+                "Summary": f"Could not parse LLM response: {response[:200]}..."
+            }
+
+        # Flexible field extraction
+        match_score = extract_field(data, ["match_score", "overall_score", "score", "total_score"])
+        skills_match = extract_field(data, ["skills_match", "skill_match", "skills_score", "skill_score"])
+        experience_match = extract_field(data, ["experience_match", "exp_match", "experience_score", "exp_score"])
+        education_match = extract_field(data, ["education_match", "edu_match", "education_score", "edu_score"])
+        summary = data.get("summary", "")
 
         return {
             "Candidate": file.name,
-            "Score": data.get("match_score", 0),
-            "Skills": data.get("skills_match", 0),
-            "Experience": data.get("experience_match", 0),
-            "Education": data.get("education_match", 0),
-            "Summary": data.get("summary", "")
+            "Score": match_score,
+            "Skills": skills_match,
+            "Experience": experience_match,
+            "Education": education_match,
+            "Summary": summary
         }
 
     except Exception as e:
@@ -80,7 +122,7 @@ if st.button("🚀 Analyze Candidates"):
 
     df = pd.DataFrame(results)
 
-    # Normalize scores to 0-100 if they are returned as decimals (<= 1)
+    # Normalize scores to 0-100 if they are decimals (<= 1)
     if df['Score'].max() <= 1:
         df['Score'] = (df['Score'] * 100).round().astype(int)
     for col in ['Skills', 'Experience', 'Education']:
