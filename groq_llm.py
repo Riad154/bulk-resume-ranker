@@ -7,14 +7,12 @@ load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-
 # -------- JSON CLEANER ----------
 def extract_json(text):
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         return match.group(0)
     return text
-
 
 # -------- MAIN FUNCTION ----------
 def score_resume(resume, jd):
@@ -30,12 +28,14 @@ Return ONLY JSON. No explanation. No markdown.
 
 JSON FORMAT:
 {{
-"match_score": number,
-"skills_match": number,
-"experience_match": number,
-"education_match": number,
+"match_score": number (0-100),
+"skills_match": number (0-100),
+"experience_match": number (0-100),
+"education_match": number (0-100),
 "summary": "short explanation"
 }}
+
+Return numeric values as either integer or decimal, not strings.
 
 JOB DESCRIPTION:
 {jd}
