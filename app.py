@@ -27,10 +27,23 @@ jd = st.text_area(
 
 top_n = st.slider("🎯 Shortlist Top Candidates", 1, 10, 5)
 
-
 # ---------- PROCESS ----------
-def process_cv(file):
 
+def safe_number(value, decimals=2):
+    """Normalize numeric output from LLM: int/float/string -> float rounded."""
+    try:
+        value = value if value is not None else 0
+        num = float(value)
+    except (ValueError, TypeError):
+        try:
+            # Handle quoted numbers or stray whitespace
+            num = float(str(value).strip())
+        except (ValueError, TypeError):
+            return 0.0
+
+    return round(num, decimals)
+
+def process_cv(file):
     try:
         text = extract_text(file)
 
@@ -38,7 +51,7 @@ def process_cv(file):
         if not text.strip():
             return {
                 "Candidate": file.name,
-                "Score": 0,
+                "Score": 0.0,
                 "Summary": "No readable text found"
             }
 
@@ -48,20 +61,19 @@ def process_cv(file):
 
         return {
             "Candidate": file.name,
-            "Score": data.get("match_score", 0),
-            "Skills": data.get("skills_match", 0),
-            "Experience": data.get("experience_match", 0),
-            "Education": data.get("education_match", 0),
+            "Score": safe_number(data.get("match_score", 0)),
+            "Skills": safe_number(data.get("skills_match", 0)),
+            "Experience": safe_number(data.get("experience_match", 0)),
+            "Education": safe_number(data.get("education_match", 0)),
             "Summary": data.get("summary", "")
         }
 
     except Exception as e:
         return {
             "Candidate": file.name,
-            "Score": 0,
+            "Score": 0.0,
             "Summary": f"Error: {str(e)}"
         }
-
 
 # ---------- ANALYZE ----------
 if st.button("🚀 Analyze Candidates"):
